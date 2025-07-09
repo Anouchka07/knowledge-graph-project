@@ -1,0 +1,7 @@
+google-generativeai==0.3.2
+pyvis==0.3.2
+networkx==3.2.1
+python-dotenv==1.1.1
+streamlit==1.46.1
+streamlit-agraph==0.0.45
+pandas==2.3.1
