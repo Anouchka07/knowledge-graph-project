@@ -7,6 +7,13 @@ from dataclasses import dataclass
 import networkx as nx
 from pyvis.network import Network
 from dotenv import load_dotenv
+try:
+    import PyPDF2
+    import pdfplumber
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+    print("PDF processing not available. Install PyPDF2 and pdfplumber for PDF support.")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -30,15 +37,61 @@ class KnowledgeGraphGenerator:
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-1.5-pro')
     
+    def extract_text_from_pdf(self, pdf_path: str) -> str:
+        """Extract text from PDF file using pdfplumber for better formatting."""
+        if not PDF_AVAILABLE:
+            raise ImportError("PDF processing libraries not available. Install PyPDF2 and pdfplumber.")
+        
+        text = ""
+        try:
+            with pdfplumber.open(pdf_path) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+        except Exception as e:
+            print(f"Error with pdfplumber, trying PyPDF2: {e}")
+            # Fallback to PyPDF2
+            try:
+                with open(pdf_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    for page in pdf_reader.pages:
+                        text += page.extract_text() + "\n"
+            except Exception as e2:
+                print(f"Error with PyPDF2: {e2}")
+                raise
+        
+        return text.strip()
+    
+    def preprocess_academic_text(self, text: str) -> str:
+        """Preprocess academic text to improve entity extraction."""
+        # Remove excessive whitespace and line breaks
+        text = re.sub(r'\n\s*\n', '\n\n', text)
+        text = re.sub(r'\s+', ' ', text)
+        
+        # Remove common academic formatting artifacts
+        text = re.sub(r'\b\d+\b(?=\s*$)', '', text, flags=re.MULTILINE)  # Remove page numbers
+        text = re.sub(r'\[\d+\]', '', text)  # Remove citation numbers
+        text = re.sub(r'\(\d{4}\)', '', text)  # Remove years in parentheses when standalone
+        
+        # Clean up hyphenated words at line breaks
+        text = re.sub(r'([a-z])-\s+([a-z])', r'\1\2', text)
+        
+        return text
+    
     def extract_entities_and_relationships(self, text: str) -> Tuple[List[Entity], List[Relationship]]:
         """Extract entities and relationships from text using Gemini."""
         
-        # Limit text length to avoid response truncation
-        if len(text) > 3000:
-            text = text[:3000] + "..."
+        # Preprocess text for better academic content handling
+        text = self.preprocess_academic_text(text)
+        
+        # Increase text length limit for better academic content processing
+        if len(text) > 6000:
+            # For longer texts, take first 3000 and last 3000 characters to capture intro and conclusion
+            text = text[:3000] + "\n\n[...middle content truncated...]\n\n" + text[-3000:]
         
         prompt = f"""
-        Analyze the following text and extract entities and relationships to create a knowledge graph.
+        You are an expert knowledge graph generator specializing in academic and literary content. Analyze the following text and extract entities and relationships to create a comprehensive knowledge graph.
         
         Text: {text}
         
@@ -61,13 +114,66 @@ class KnowledgeGraphGenerator:
             ]
         }}
         
-        Guidelines:
-        - Extract maximum 15 entities and 20 relationships to avoid response truncation
-        - Use simple entity names (avoid quotes and special characters)
-        - Entity types: Person, Organization, Location, Concept, Technology, Event, etc.
-        - Relationship types: develops, creates, enables, includes, requires, etc.
-        - Keep descriptions under 50 characters
+        IMPORTANT GUIDELINES for Academic/Literary Content:
+        
+        ENTITY EXTRACTION:
+        - Extract 20-30 entities for comprehensive coverage
+        - Focus on key concepts, theories, methodologies, and frameworks
+        - Include important authors, researchers, and historical figures mentioned
+        - Identify specific terms, models, algorithms, or principles
+        - Capture institutions, publications, and significant works referenced
+        - Include temporal entities (time periods, dates, eras) when relevant
+        - Extract geographical locations if contextually important
+        
+        ENTITY TYPES (choose most appropriate):
+        - Concept: Abstract ideas, theories, principles, frameworks
+        - Method: Techniques, algorithms, processes, methodologies
+        - Person: Authors, researchers, historical figures, theorists
+        - Organization: Institutions, companies, research groups
+        - Publication: Books, papers, journals, studies
+        - Technology: Tools, systems, software, instruments
+        - Event: Historical events, discoveries, developments
+        - Location: Geographic places, regions, countries
+        - Temporal: Time periods, eras, dates
+        - Field: Academic disciplines, domains of study
+        - Metric: Measurements, indicators, variables
+        
+        RELATIONSHIP EXTRACTION:
+        - Extract 25-35 relationships for rich connectivity
+        - Focus on intellectual and conceptual connections
+        - Include hierarchical relationships (broader/narrower concepts)
+        - Capture causal relationships (causes, leads to, results in)
+        - Identify comparative relationships (similar to, different from)
+        - Include temporal relationships (preceded by, followed by, developed from)
+        - Capture authorship and attribution relationships
+        - Include methodological relationships (uses, applies, implements)
+        
+        RELATIONSHIP TYPES (choose most appropriate):
+        - defines: One concept defines another
+        - includes: One concept includes another as a component
+        - uses: One entity uses another as a tool or method
+        - develops: One entity develops or creates another
+        - influences: One entity influences another
+        - based_on: One concept is based on another
+        - applies_to: One method applies to a domain or problem
+        - authored_by: A work is authored by a person
+        - published_in: A work is published in a venue
+        - part_of: One entity is part of a larger entity
+        - leads_to: One concept or event leads to another
+        - measures: One metric measures another concept
+        - belongs_to: One entity belongs to a category or field
+        - preceded_by: One entity came before another temporally
+        - similar_to: Two entities share similarities
+        - opposite_of: Two entities are contrasting
+        - requires: One entity requires another to function
+        - evaluates: One method evaluates another entity
+        
+        QUALITY REQUIREMENTS:
+        - Use clear, concise entity names (avoid overly long phrases)
         - Ensure entity names in relationships match exactly with entity names in the entities list
+        - Provide meaningful descriptions (30-60 characters)
+        - Maintain academic precision while keeping descriptions accessible
+        - Prioritize the most important and well-established entities and relationships
         """
         
         try:
@@ -262,10 +368,17 @@ class KnowledgeGraphGenerator:
     def generate_knowledge_graph(self, input_file: str, output_file: str = "knowledge_graph.html"):
         """Main method to generate knowledge graph from input file."""
         
-        # Read input text
+        # Read input text based on file type
         try:
-            with open(input_file, 'r', encoding='utf-8') as f:
-                text = f.read()
+            if input_file.lower().endswith('.pdf'):
+                if not PDF_AVAILABLE:
+                    print("Error: PDF processing libraries not available. Install PyPDF2 and pdfplumber.")
+                    return
+                print("Extracting text from PDF...")
+                text = self.extract_text_from_pdf(input_file)
+            else:
+                with open(input_file, 'r', encoding='utf-8') as f:
+                    text = f.read()
         except FileNotFoundError:
             print(f"Error: Input file '{input_file}' not found.")
             return

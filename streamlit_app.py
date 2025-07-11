@@ -97,8 +97,8 @@ if 'relationships' not in st.session_state:
 with st.sidebar:
     st.header("🔧 Controls")
     
-    # File upload for input text
-    uploaded_file = st.file_uploader("Upload text file", type=['txt'])
+    # File upload for input text or PDF
+    uploaded_file = st.file_uploader("Upload text file or PDF", type=['txt', 'pdf'])
     
     # Or use the existing input.txt
     use_existing = st.checkbox("Use existing input.txt", value=True)
@@ -122,7 +122,22 @@ with st.sidebar:
                 
                 # Read text input
                 if uploaded_file:
-                    text = uploaded_file.read().decode('utf-8')
+                    if uploaded_file.type == "application/pdf":
+                        # Save uploaded PDF temporarily
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                            tmp_file.write(uploaded_file.read())
+                            tmp_file_path = tmp_file.name
+                        
+                        # Extract text from PDF
+                        try:
+                            text = generator.extract_text_from_pdf(tmp_file_path)
+                        finally:
+                            # Clean up temporary file
+                            import os
+                            os.unlink(tmp_file_path)
+                    else:
+                        text = uploaded_file.read().decode('utf-8')
                 else:
                     with open('input.txt', 'r', encoding='utf-8') as f:
                         text = f.read()
