@@ -2,6 +2,7 @@ import streamlit as st
 import json
 import os
 import sys
+import io
 from typing import List, Dict, Any
 import pandas as pd
 from dotenv import load_dotenv
@@ -387,7 +388,7 @@ if st.session_state.graph_rag:
         
         # Download options
         st.subheader("💾 Download Data")
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             if st.button("📥 Download as JSON"):
@@ -416,6 +417,88 @@ if st.session_state.graph_rag:
                     data=json.dumps(data, indent=2),
                     file_name="knowledge_graph.json",
                     mime="application/json"
+                )
+        
+        with col2:
+            if st.button("🌐 Download as HTML"):
+                try:
+                    # Get API key for generator
+                    try:
+                        api_key = st.secrets["GEMINI_API_KEY"]
+                    except KeyError:
+                        api_key = os.getenv('GEMINI_API_KEY')
+                    
+                    if api_key:
+                        generator = KnowledgeGraphGenerator(api_key)
+                        
+                        # Generate HTML content
+                        import tempfile
+                        import io
+                        
+                        # Create temporary HTML file
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as tmp_file:
+                            generator.create_interactive_graph(
+                                st.session_state.entities,
+                                st.session_state.relationships,
+                                tmp_file.name
+                            )
+                            
+                            # Read the generated HTML
+                            with open(tmp_file.name, 'r', encoding='utf-8') as f:
+                                html_content = f.read()
+                            
+                            # Clean up temporary file
+                            os.unlink(tmp_file.name)
+                        
+                        # Provide download
+                        st.download_button(
+                            label="Download HTML Visualization",
+                            data=html_content,
+                            file_name="knowledge_graph_visualization.html",
+                            mime="text/html"
+                        )
+                        
+                        st.success("✅ HTML visualization ready for download!")
+                    else:
+                        st.error("API key not found")
+                except Exception as e:
+                    st.error(f"Error generating HTML: {str(e)}")
+        
+        with col3:
+            if st.button("📊 Download as CSV"):
+                # Create CSV for entities
+                entities_df = pd.DataFrame([
+                    {
+                        'Name': e.name,
+                        'Type': e.type,
+                        'Description': e.description
+                    }
+                    for e in st.session_state.entities
+                ])
+                
+                # Create CSV for relationships
+                relationships_df = pd.DataFrame([
+                    {
+                        'Source': r.source,
+                        'Relation': r.relation,
+                        'Target': r.target,
+                        'Description': r.description
+                    }
+                    for r in st.session_state.relationships
+                ])
+                
+                # Combine into one CSV with separator
+                csv_buffer = io.StringIO()
+                csv_buffer.write("ENTITIES\n")
+                entities_df.to_csv(csv_buffer, index=False)
+                csv_buffer.write("\n\nRELATIONSHIPS\n")
+                relationships_df.to_csv(csv_buffer, index=False)
+                
+                st.download_button(
+                    label="Download CSV Data",
+                    data=csv_buffer.getvalue(),
+                    file_name="knowledge_graph_data.csv",
+                    mime="text/csv"
                 )
 
 else:
